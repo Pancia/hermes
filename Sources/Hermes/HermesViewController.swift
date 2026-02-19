@@ -34,6 +34,10 @@ class HermesViewController: NSViewController {
     private let searchField = NSTextField()
     private let footerLabel = NSTextField(labelWithString: "")
 
+    // Window mode views
+    private let windowListView = WindowListView()
+    private let windowSearchField = NSTextField()
+
     // MARK: - Lifecycle
 
     override func loadView() {
@@ -56,10 +60,13 @@ class HermesViewController: NSViewController {
         currentMenu = rootCommands
         searchQuery = ""
         searchField.isHidden = true
+        breadcrumbLabel.isHidden = false
         breadcrumbLabel.stringValue = "Hermes"
         commandMenuView.clearSelection()
         commandMenuView.setItems(currentMenu)
         commandMenuView.isHidden = false
+        windowListView.isHidden = true
+        windowSearchField.isHidden = true
     }
 
     // MARK: - Setup
@@ -97,6 +104,26 @@ class HermesViewController: NSViewController {
         }
         view.addSubview(commandMenuView)
 
+        // Window search field (hidden by default)
+        windowSearchField.font = Theme.bodyFont
+        windowSearchField.textColor = Theme.text
+        windowSearchField.backgroundColor = Theme.bgItem
+        windowSearchField.isBezeled = false
+        windowSearchField.focusRingType = .none
+        windowSearchField.placeholderString = "Filter windows..."
+        windowSearchField.isHidden = true
+        windowSearchField.delegate = self
+        windowSearchField.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(windowSearchField)
+
+        // Window list view (hidden by default)
+        windowListView.isHidden = true
+        windowListView.translatesAutoresizingMaskIntoConstraints = false
+        windowListView.onSelect = { [weak self] window in
+            self?.onFocusWindow?(window.id)
+        }
+        view.addSubview(windowListView)
+
         // Footer — bottom
         footerLabel.font = Theme.smallFont
         footerLabel.textColor = Theme.textDim
@@ -126,6 +153,18 @@ class HermesViewController: NSViewController {
             commandMenuView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             commandMenuView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             commandMenuView.bottomAnchor.constraint(equalTo: footerLabel.topAnchor, constant: -8),
+
+            // Window search field (below breadcrumb, shown in window mode)
+            windowSearchField.topAnchor.constraint(equalTo: breadcrumbLabel.bottomAnchor, constant: 8),
+            windowSearchField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padding),
+            windowSearchField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padding),
+            windowSearchField.heightAnchor.constraint(equalToConstant: 28),
+
+            // Window list view (below window search field)
+            windowListView.topAnchor.constraint(equalTo: windowSearchField.bottomAnchor, constant: 8),
+            windowListView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            windowListView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            windowListView.bottomAnchor.constraint(equalTo: footerLabel.topAnchor, constant: -8),
 
             // Footer
             footerLabel.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -padding),
@@ -233,10 +272,12 @@ class HermesViewController: NSViewController {
 
         let keyCode = event.keyCode
 
-        // Escape — always close or exit search
+        // Escape — close, exit search, or exit window mode
         if keyCode == 53 { // Escape
             if mode == .search {
                 exitSearchMode()
+            } else if mode == .window {
+                exitWindowMode()
             } else {
                 onClose?()
             }
@@ -246,6 +287,11 @@ class HermesViewController: NSViewController {
         // In search mode, let the text field handle most input
         if mode == .search {
             handleSearchKey(event)
+            return
+        }
+
+        // In window mode, keyboard is handled via the search field delegate
+        if mode == .window {
             return
         }
 
@@ -361,54 +407,80 @@ class HermesViewController: NSViewController {
     private func enterWindowMode() {
         mode = .window
         breadcrumbLabel.stringValue = "Windows"
-        footerLabel.stringValue = "ESC close  |  DEL back"
-        commandMenuView.setItems([:])
+        footerLabel.stringValue = "ESC back  |  ↑↓ navigate  |  ENTER focus"
+        commandMenuView.isHidden = true
+        windowSearchField.isHidden = false
+        windowSearchField.stringValue = ""
+        windowListView.isHidden = false
+        view.window?.makeFirstResponder(windowSearchField)
 
         WindowManager.queryWindows { [weak self] windows in
             guard let self = self, self.mode == .window else { return }
-            var items: [String: CommandEntry] = [:]
-            var used: Set<Character> = []
-            for win in windows {
-                if let key = CommandLoader.assignKey(from: win.app + win.title, used: &used) {
-                    items[String(key)] = .action(title: "[\(win.space)] \(win.app) — \(win.title)", command: "\(win.id)")
-                }
-            }
-            self.currentMenu = items
-            self.commandMenuView.setItems(items)
-            self.commandMenuView.onSelect = { [weak self] _, entry in
-                if case .action(_, let idStr) = entry, let id = Int(idStr) {
-                    self?.onFocusWindow?(id)
-                }
-            }
+            self.windowListView.setWindows(windows)
         }
+    }
+
+    private func exitWindowMode() {
+        mode = .command
+        windowListView.isHidden = true
+        windowSearchField.isHidden = true
+        commandMenuView.isHidden = false
+        breadcrumbLabel.stringValue = "Hermes"
+        footerLabel.stringValue = "ESC close  |  DEL back  |  : search"
+        commandMenuView.setItems(currentMenu)
+        commandMenuView.clearSelection()
+        view.window?.makeFirstResponder(view)
     }
 }
 
-// MARK: - NSTextFieldDelegate (Search)
+// MARK: - NSTextFieldDelegate (Search & Window Filter)
 
 extension HermesViewController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
-        guard mode == .search else { return }
-        searchQuery = searchField.stringValue
-        showSearchResults()
+        guard let field = obj.object as? NSTextField else { return }
+        if mode == .search && field === searchField {
+            searchQuery = searchField.stringValue
+            showSearchResults()
+        } else if mode == .window && field === windowSearchField {
+            windowListView.filter(query: windowSearchField.stringValue)
+        }
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            exitSearchMode()
-            return true
-        }
-        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            commandMenuView.activateSelection()
-            return true
-        }
-        if commandSelector == #selector(NSResponder.moveDown(_:)) {
-            commandMenuView.moveSelectionVertical(by: 1)
-            return true
-        }
-        if commandSelector == #selector(NSResponder.moveUp(_:)) {
-            commandMenuView.moveSelectionVertical(by: -1)
-            return true
+        if mode == .search {
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                exitSearchMode()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                commandMenuView.activateSelection()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.moveDown(_:)) {
+                commandMenuView.moveSelectionVertical(by: 1)
+                return true
+            }
+            if commandSelector == #selector(NSResponder.moveUp(_:)) {
+                commandMenuView.moveSelectionVertical(by: -1)
+                return true
+            }
+        } else if mode == .window {
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                exitWindowMode()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                windowListView.activateSelection()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.moveDown(_:)) {
+                windowListView.moveSelection(by: 1)
+                return true
+            }
+            if commandSelector == #selector(NSResponder.moveUp(_:)) {
+                windowListView.moveSelection(by: -1)
+                return true
+            }
         }
         return false
     }
