@@ -31,8 +31,10 @@ class HermesViewController: NSViewController {
 
     private let breadcrumbLabel = NSTextField(labelWithString: "")
     private let commandMenuView = CommandMenuView()
+    private let appGridView = AppGridView()
     private let searchField = NSTextField()
     private let footerLabel = NSTextField(labelWithString: "")
+    private var appSearchQuery = ""
 
     // Window mode views
     private let windowListView = WindowListView()
@@ -59,6 +61,7 @@ class HermesViewController: NSViewController {
         menuStack.removeAll()
         currentMenu = rootCommands
         searchQuery = ""
+        appSearchQuery = ""
         searchField.isHidden = true
         breadcrumbLabel.isHidden = false
         breadcrumbLabel.stringValue = "Hermes"
@@ -67,6 +70,7 @@ class HermesViewController: NSViewController {
         commandMenuView.isHidden = false
         windowListView.isHidden = true
         windowSearchField.isHidden = true
+        appGridView.isHidden = true
     }
 
     // MARK: - Setup
@@ -103,6 +107,14 @@ class HermesViewController: NSViewController {
             self?.handleMenuSelection(key: key, entry: entry)
         }
         view.addSubview(commandMenuView)
+
+        // App icon grid (hidden by default)
+        appGridView.translatesAutoresizingMaskIntoConstraints = false
+        appGridView.isHidden = true
+        appGridView.onLaunch = { [weak self] app in
+            self?.onLaunchApp?(app.name)
+        }
+        view.addSubview(appGridView)
 
         // Window search field (hidden by default)
         windowSearchField.font = Theme.bodyFont
@@ -153,6 +165,12 @@ class HermesViewController: NSViewController {
             commandMenuView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             commandMenuView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             commandMenuView.bottomAnchor.constraint(equalTo: footerLabel.topAnchor, constant: -8),
+
+            // App icon grid (same position as command menu)
+            appGridView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 12),
+            appGridView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            appGridView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            appGridView.bottomAnchor.constraint(equalTo: footerLabel.topAnchor, constant: -8),
 
             // Window search field (below breadcrumb, shown in window mode)
             windowSearchField.topAnchor.constraint(equalTo: breadcrumbLabel.bottomAnchor, constant: 8),
@@ -272,13 +290,16 @@ class HermesViewController: NSViewController {
 
         let keyCode = event.keyCode
 
-        // Escape — close, exit search, or exit window mode
+        // Escape — context-dependent
         if keyCode == 53 { // Escape
-            if mode == .search {
+            switch mode {
+            case .search:
                 exitSearchMode()
-            } else if mode == .window {
+            case .app:
+                exitAppMode()
+            case .window:
                 exitWindowMode()
-            } else {
+            case .command:
                 onClose?()
             }
             return
@@ -287,6 +308,12 @@ class HermesViewController: NSViewController {
         // In search mode, let the text field handle most input
         if mode == .search {
             handleSearchKey(event)
+            return
+        }
+
+        // In app mode, handle grid navigation (search field handles text)
+        if mode == .app {
+            handleAppKey(event)
             return
         }
 
@@ -375,31 +402,66 @@ class HermesViewController: NSViewController {
         }
     }
 
+    private func handleAppKey(_ event: NSEvent) {
+        let keyCode = event.keyCode
+
+        // Enter — launch selected app
+        if keyCode == 36 {
+            appGridView.activateSelection()
+            return
+        }
+
+        // Arrow keys — grid navigation
+        if keyCode == 123 { // Left
+            appGridView.moveSelection(by: -1)
+            return
+        }
+        if keyCode == 124 { // Right
+            appGridView.moveSelection(by: 1)
+            return
+        }
+        if keyCode == 125 { // Down
+            appGridView.moveSelectionVertical(by: 1)
+            return
+        }
+        if keyCode == 126 { // Up
+            appGridView.moveSelectionVertical(by: -1)
+            return
+        }
+    }
+
     // MARK: - App Mode
 
     private func enterAppMode() {
         mode = .app
-        breadcrumbLabel.stringValue = "Applications"
-        footerLabel.stringValue = "ESC close  |  DEL back"
-        commandMenuView.setItems([:])
+        appSearchQuery = ""
+        searchField.stringValue = ""
+        searchField.placeholderString = "Search apps..."
+        searchField.isHidden = false
+        breadcrumbLabel.isHidden = true
+        commandMenuView.isHidden = true
+        appGridView.isHidden = false
+        footerLabel.stringValue = "ESC back  |  arrows navigate  |  ENTER launch"
+        view.window?.makeFirstResponder(searchField)
 
         AppScanner.loadApps { [weak self] apps in
             guard let self = self, self.mode == .app else { return }
-            var items: [String: CommandEntry] = [:]
-            var used: Set<Character> = []
-            for app in apps.prefix(Theme.maxAppsVisible) {
-                if let key = CommandLoader.assignKey(from: app.name, used: &used) {
-                    items[String(key)] = .action(title: app.name, command: "")
-                }
-            }
-            self.currentMenu = items
-            self.commandMenuView.setItems(items)
-            self.commandMenuView.onSelect = { [weak self] _, entry in
-                if case .action(let title, _) = entry {
-                    self?.onLaunchApp?(title)
-                }
-            }
+            self.appGridView.setApps(apps)
         }
+    }
+
+    private func exitAppMode() {
+        mode = .command
+        appSearchQuery = ""
+        searchField.isHidden = true
+        searchField.placeholderString = "Search commands..."
+        breadcrumbLabel.isHidden = false
+        commandMenuView.isHidden = false
+        appGridView.isHidden = true
+        footerLabel.stringValue = "ESC close  |  DEL back  |  : search"
+        commandMenuView.setItems(currentMenu)
+        commandMenuView.clearSelection()
+        view.window?.makeFirstResponder(view)
     }
 
     // MARK: - Window Mode
@@ -433,7 +495,7 @@ class HermesViewController: NSViewController {
     }
 }
 
-// MARK: - NSTextFieldDelegate (Search & Window Filter)
+// MARK: - NSTextFieldDelegate (Search, App Filter & Window Filter)
 
 extension HermesViewController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
@@ -441,6 +503,9 @@ extension HermesViewController: NSTextFieldDelegate {
         if mode == .search && field === searchField {
             searchQuery = searchField.stringValue
             showSearchResults()
+        } else if mode == .app && field === searchField {
+            appSearchQuery = searchField.stringValue
+            appGridView.filterApps(appSearchQuery)
         } else if mode == .window && field === windowSearchField {
             windowListView.filter(query: windowSearchField.stringValue)
         }
@@ -462,6 +527,31 @@ extension HermesViewController: NSTextFieldDelegate {
             }
             if commandSelector == #selector(NSResponder.moveUp(_:)) {
                 commandMenuView.moveSelectionVertical(by: -1)
+                return true
+            }
+        } else if mode == .app {
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                exitAppMode()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                appGridView.activateSelection()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.moveDown(_:)) {
+                appGridView.moveSelectionVertical(by: 1)
+                return true
+            }
+            if commandSelector == #selector(NSResponder.moveUp(_:)) {
+                appGridView.moveSelectionVertical(by: -1)
+                return true
+            }
+            if commandSelector == #selector(NSResponder.moveLeft(_:)) {
+                appGridView.moveSelection(by: -1)
+                return true
+            }
+            if commandSelector == #selector(NSResponder.moveRight(_:)) {
+                appGridView.moveSelection(by: 1)
                 return true
             }
         } else if mode == .window {
