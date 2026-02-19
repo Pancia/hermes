@@ -76,7 +76,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Click outside to dismiss
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             guard let self = self, self.panel.isVisible else { return }
-            let loc = event.locationInWindow
             let screenPoint = NSEvent.mouseLocation
             if !self.panel.frame.contains(screenPoint) {
                 self.hidePanel()

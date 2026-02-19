@@ -24,8 +24,9 @@ class HermesPanel: NSPanel {
 
         // Rounded corners via content view
         let visual = NSVisualEffectView(frame: rect)
-        visual.material = .dark
+        visual.material = .hudWindow
         visual.state = .active
+        visual.appearance = NSAppearance(named: .darkAqua)
         visual.wantsLayer = true
         visual.layer?.cornerRadius = 12
         visual.layer?.masksToBounds = true
