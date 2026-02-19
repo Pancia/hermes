@@ -24,13 +24,13 @@ class HermesViewController: NSViewController {
     private var rootCommands: [String: CommandEntry] = [:]
     private var currentMenu: [String: CommandEntry] = [:]
     private var menuStack: [(name: String, items: [String: CommandEntry])] = []
-    private var searchQuery = ""
     private var flatCommands: [FlatCommand] = []
 
     // MARK: - Views
 
     private let breadcrumbLabel = NSTextField(labelWithString: "")
     private let commandMenuView = CommandMenuView()
+    private let commandSearchView = CommandSearchView()
     private let appGridView = AppGridView()
     private let searchField = NSTextField()
     private let footerLabel = NSTextField(labelWithString: "")
@@ -60,17 +60,18 @@ class HermesViewController: NSViewController {
         mode = .command
         menuStack.removeAll()
         currentMenu = rootCommands
-        searchQuery = ""
         appSearchQuery = ""
         searchField.isHidden = true
         breadcrumbLabel.isHidden = false
         breadcrumbLabel.stringValue = "Hermes"
+        commandMenuView.isHidden = false
         commandMenuView.clearSelection()
         commandMenuView.setItems(currentMenu)
-        commandMenuView.isHidden = false
+        commandSearchView.isHidden = true
         windowListView.isHidden = true
         windowSearchField.isHidden = true
         appGridView.isHidden = true
+        footerLabel.stringValue = "ESC close  |  DEL back  |  : search"
     }
 
     // MARK: - Setup
@@ -89,13 +90,13 @@ class HermesViewController: NSViewController {
         breadcrumbLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(breadcrumbLabel)
 
-        // Search field (hidden by default)
+        // Search field (used for app mode filtering, hidden by default)
         searchField.font = Theme.bodyFont
         searchField.textColor = Theme.text
         searchField.backgroundColor = Theme.bgItem
         searchField.isBezeled = false
         searchField.focusRingType = .none
-        searchField.placeholderString = "Search commands..."
+        searchField.placeholderString = "Search apps..."
         searchField.isHidden = true
         searchField.delegate = self
         searchField.translatesAutoresizingMaskIntoConstraints = false
@@ -107,6 +108,17 @@ class HermesViewController: NSViewController {
             self?.handleMenuSelection(key: key, entry: entry)
         }
         view.addSubview(commandMenuView)
+
+        // Search view (hidden by default)
+        commandSearchView.isHidden = true
+        commandSearchView.translatesAutoresizingMaskIntoConstraints = false
+        commandSearchView.onExecute = { [weak self] cmd in
+            self?.onExecute?(cmd.command)
+        }
+        commandSearchView.onCancel = { [weak self] in
+            self?.exitSearchMode()
+        }
+        view.addSubview(commandSearchView)
 
         // App icon grid (hidden by default)
         appGridView.translatesAutoresizingMaskIntoConstraints = false
@@ -154,7 +166,7 @@ class HermesViewController: NSViewController {
             breadcrumbLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padding),
             breadcrumbLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padding),
 
-            // Search field (same position as breadcrumb, shown when in search mode)
+            // Search field (same position as breadcrumb, shown in app mode)
             searchField.topAnchor.constraint(equalTo: view.topAnchor, constant: padding),
             searchField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padding),
             searchField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padding),
@@ -165,6 +177,12 @@ class HermesViewController: NSViewController {
             commandMenuView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             commandMenuView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             commandMenuView.bottomAnchor.constraint(equalTo: footerLabel.topAnchor, constant: -8),
+
+            // Search view (overlaps command menu area)
+            commandSearchView.topAnchor.constraint(equalTo: view.topAnchor, constant: padding),
+            commandSearchView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padding),
+            commandSearchView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padding),
+            commandSearchView.bottomAnchor.constraint(equalTo: footerLabel.topAnchor, constant: -8),
 
             // App icon grid (same position as command menu)
             appGridView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 12),
@@ -240,44 +258,23 @@ class HermesViewController: NSViewController {
 
     private func enterSearchMode() {
         mode = .search
-        searchQuery = ""
-        searchField.stringValue = ""
-        searchField.isHidden = false
         breadcrumbLabel.isHidden = true
-        view.window?.makeFirstResponder(searchField)
-        footerLabel.stringValue = "ESC cancel  |  ENTER execute"
-        showSearchResults()
+        commandMenuView.isHidden = true
+        commandSearchView.isHidden = false
+        commandSearchView.setCommands(flatCommands)
+        commandSearchView.activate()
+        footerLabel.stringValue = "ESC cancel  |  \u{2191}\u{2193} navigate  |  ENTER execute"
     }
 
     private func exitSearchMode() {
         mode = .command
-        searchField.isHidden = true
+        commandSearchView.isHidden = true
         breadcrumbLabel.isHidden = false
+        commandMenuView.isHidden = false
         footerLabel.stringValue = "ESC close  |  DEL back  |  : search"
         commandMenuView.setItems(currentMenu)
         commandMenuView.clearSelection()
-        // Return keyboard focus to the view
         view.window?.makeFirstResponder(view)
-    }
-
-    private func showSearchResults() {
-        let query = searchQuery.lowercased()
-        if query.isEmpty {
-            commandMenuView.setItems([:])
-            return
-        }
-
-        var results: [String: CommandEntry] = [:]
-        var count = 0
-        for cmd in flatCommands {
-            guard count < Theme.maxSearchResults else { break }
-            if cmd.label.lowercased().contains(query) || cmd.command.lowercased().contains(query) {
-                let pathStr = cmd.path.isEmpty ? "" : cmd.path.joined(separator: " > ") + " > "
-                results[cmd.key + String(count)] = .action(title: "\(pathStr)\(cmd.label)", command: cmd.command)
-                count += 1
-            }
-        }
-        commandMenuView.setItems(results)
     }
 
     // MARK: - Keyboard Handling
@@ -305,9 +302,8 @@ class HermesViewController: NSViewController {
             return
         }
 
-        // In search mode, let the text field handle most input
+        // In search mode, the CommandSearchView handles all input
         if mode == .search {
-            handleSearchKey(event)
             return
         }
 
@@ -382,26 +378,6 @@ class HermesViewController: NSViewController {
         super.keyDown(with: event)
     }
 
-    private func handleSearchKey(_ event: NSEvent) {
-        let keyCode = event.keyCode
-
-        // Enter — execute first/selected result
-        if keyCode == 36 {
-            commandMenuView.activateSelection()
-            return
-        }
-
-        // Arrow keys for navigation within search results
-        if keyCode == 125 { // Down
-            commandMenuView.moveSelectionVertical(by: 1)
-            return
-        }
-        if keyCode == 126 { // Up
-            commandMenuView.moveSelectionVertical(by: -1)
-            return
-        }
-    }
-
     private func handleAppKey(_ event: NSEvent) {
         let keyCode = event.keyCode
 
@@ -454,7 +430,7 @@ class HermesViewController: NSViewController {
         mode = .command
         appSearchQuery = ""
         searchField.isHidden = true
-        searchField.placeholderString = "Search commands..."
+        searchField.placeholderString = "Search apps..."
         breadcrumbLabel.isHidden = false
         commandMenuView.isHidden = false
         appGridView.isHidden = true
@@ -469,7 +445,7 @@ class HermesViewController: NSViewController {
     private func enterWindowMode() {
         mode = .window
         breadcrumbLabel.stringValue = "Windows"
-        footerLabel.stringValue = "ESC back  |  ↑↓ navigate  |  ENTER focus"
+        footerLabel.stringValue = "ESC back  |  \u{2191}\u{2193} navigate  |  ENTER focus"
         commandMenuView.isHidden = true
         windowSearchField.isHidden = false
         windowSearchField.stringValue = ""
@@ -495,15 +471,12 @@ class HermesViewController: NSViewController {
     }
 }
 
-// MARK: - NSTextFieldDelegate (Search, App Filter & Window Filter)
+// MARK: - NSTextFieldDelegate (App Filter & Window Filter)
 
 extension HermesViewController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
-        if mode == .search && field === searchField {
-            searchQuery = searchField.stringValue
-            showSearchResults()
-        } else if mode == .app && field === searchField {
+        if mode == .app && field === searchField {
             appSearchQuery = searchField.stringValue
             appGridView.filterApps(appSearchQuery)
         } else if mode == .window && field === windowSearchField {
@@ -512,24 +485,7 @@ extension HermesViewController: NSTextFieldDelegate {
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        if mode == .search {
-            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                exitSearchMode()
-                return true
-            }
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                commandMenuView.activateSelection()
-                return true
-            }
-            if commandSelector == #selector(NSResponder.moveDown(_:)) {
-                commandMenuView.moveSelectionVertical(by: 1)
-                return true
-            }
-            if commandSelector == #selector(NSResponder.moveUp(_:)) {
-                commandMenuView.moveSelectionVertical(by: -1)
-                return true
-            }
-        } else if mode == .app {
+        if mode == .app {
             if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
                 exitAppMode()
                 return true
