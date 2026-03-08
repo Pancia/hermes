@@ -1,5 +1,6 @@
 {
-    "c": ["calendar", "agenda 24"],
+    "c": ["calendar", {"interactive": "agenda 24"}],
+
     "d": {
         "_desc": "+dotfiles",
         "e": ["Edit dotfiles", "cd ~/dotfiles && v"]
@@ -88,5 +89,5 @@
     },
     "t": ["open my yt playlists (WIP tv-board)", "open -na 'Brave Browser Beta' --args $(cat ~/Cloud/_config/my-youtube.playlists)"],
     "=": ["edit Hermes config", "nvim ~/gt/hermes/Sources/Hermes/Config/commands.json"],
-    "-": ["#!fish:~/private/bin/superwhisper_status", "~/private/bin/superwhisper_reset"]
+    "-": [{"shell:fish": "~/private/bin/superwhisper_status"}, "~/private/bin/superwhisper_reset"]
 }

@@ -14,7 +14,7 @@ class HermesViewController: NSViewController {
     // MARK: - Callbacks
 
     var onClose: (() -> Void)?
-    var onExecute: ((String) -> Void)?
+    var onExecute: ((CommandSpec) -> Void)?
     var onLaunchApp: ((String) -> Void)?
     var onFocusWindow: ((Int) -> Void)?
 
@@ -43,10 +43,11 @@ class HermesViewController: NSViewController {
     // MARK: - Lifecycle
 
     override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0,
+        let container = KeyableBackingView(frame: NSRect(x: 0, y: 0,
                                               width: Theme.panelWidth,
                                               height: Theme.panelHeight))
         container.wantsLayer = true
+        container.layer?.backgroundColor = Theme.bg.cgColor
         self.view = container
     }
 
@@ -57,6 +58,7 @@ class HermesViewController: NSViewController {
     }
 
     func prepareForShow() {
+        loadCommands()
         mode = .command
         menuStack.removeAll()
         currentMenu = rootCommands
@@ -191,12 +193,42 @@ class HermesViewController: NSViewController {
         ])
     }
 
+    // Cache last fully-resolved commands so subsequent opens are instant
+    private static var cachedCommands: [String: CommandEntry]?
+    private static var cachedFlat: [FlatCommand]?
+
     private func loadCommands() {
-        let raw = CommandLoader.load()
-        rootCommands = CommandResolver.resolve(raw)
-        currentMenu = rootCommands
-        flatCommands = CommandLoader.flattenCommands(rootCommands)
-        commandMenuView.setItems(currentMenu)
+        // Phase 1: Show cached results instantly if available, otherwise show raw JSON parse
+        if let cached = Self.cachedCommands, let cachedFlat = Self.cachedFlat {
+            rootCommands = cached
+            currentMenu = cached
+            flatCommands = cachedFlat
+            commandMenuView.setItems(cached)
+        } else {
+            let raw = CommandLoader.load()
+            rootCommands = raw
+            currentMenu = raw
+            flatCommands = CommandLoader.flattenCommands(raw)
+            commandMenuView.setItems(raw)
+        }
+
+        // Phase 2: Refresh in background (re-reads JSON + resolves generators/dynamic titles)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let raw = CommandLoader.load()
+            let resolved = CommandResolver.resolve(raw)
+            let flat = CommandLoader.flattenCommands(resolved)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                Self.cachedCommands = resolved
+                Self.cachedFlat = flat
+                self.rootCommands = resolved
+                if self.menuStack.isEmpty {
+                    self.currentMenu = resolved
+                    self.commandMenuView.setItems(resolved)
+                }
+                self.flatCommands = flat
+            }
+        }
     }
 
     // MARK: - Breadcrumb
@@ -214,7 +246,7 @@ class HermesViewController: NSViewController {
 
     private func handleMenuSelection(key: String, entry: CommandEntry) {
         switch entry {
-        case .action(_, let command):
+        case .action(_, let command, _):
             onExecute?(command)
         case .submenu(let desc, let items):
             menuStack.append((name: desc, items: currentMenu))
@@ -271,7 +303,7 @@ class HermesViewController: NSViewController {
         var count = 0
         for cmd in flatCommands {
             guard count < Theme.maxSearchResults else { break }
-            if cmd.label.lowercased().contains(query) || cmd.command.lowercased().contains(query) {
+            if cmd.label.lowercased().contains(query) || cmd.command.cmd.lowercased().contains(query) {
                 let pathStr = cmd.path.isEmpty ? "" : cmd.path.joined(separator: " > ") + " > "
                 results[cmd.key + String(count)] = .action(title: "\(pathStr)\(cmd.label)", command: cmd.command)
                 count += 1

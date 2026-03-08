@@ -1,5 +1,10 @@
 import AppKit
 
+/// NSView subclass that accepts first responder for keyboard events
+class KeyableBackingView: NSView {
+    override var acceptsFirstResponder: Bool { true }
+}
+
 class HermesPanel: NSPanel {
     init() {
         let width: CGFloat = 780
@@ -17,21 +22,20 @@ class HermesPanel: NSPanel {
         isFloatingPanel = true
         hidesOnDeactivate = false
         isMovableByWindowBackground = false
+        // isOpaque=false + clear bg needed for rounded corners to not show square edges
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
         becomesKeyOnlyIfNeeded = false
 
-        // Rounded corners via content view
-        let visual = NSVisualEffectView(frame: rect)
-        visual.material = .hudWindow
-        visual.state = .active
-        visual.appearance = NSAppearance(named: .darkAqua)
-        visual.wantsLayer = true
-        visual.layer?.cornerRadius = 12
-        visual.layer?.masksToBounds = true
-        visual.layer?.backgroundColor = Theme.bg.cgColor
-        contentView = visual
+        // Opaque rounded content view
+        let container = KeyableBackingView(frame: rect)
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 12
+        container.layer?.masksToBounds = true
+        container.layer?.backgroundColor = Theme.bg.cgColor
+        container.layer?.isOpaque = true
+        contentView = container
     }
 
     // Allow the panel to become key (so it receives keyboard events)

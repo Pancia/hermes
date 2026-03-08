@@ -2,35 +2,18 @@ import Foundation
 
 /// Executes shell commands — interactive ones in Ghostty, background ones via fish
 enum ShellExecutor {
-    private static let interactivePatterns: [String] = [
-        "^n?vim\\s", "^v\\s", "^v$", "&&\\s*v$", "&&\\s*v\\s",
-        "^htop", "^less\\s", "^man\\s", "^cmus", "^ytdl$", "^ytdl\\s",
-    ]
-
-    static func execute(_ command: String) {
-        if needsTerminal(command) {
-            executeInteractive(command)
-        } else {
-            executeBackground(command)
+    static func execute(_ spec: CommandSpec) {
+        switch spec.mode {
+        case .background:
+            executeBackground(spec.cmd)
+        case .shell:
+            executeShell(spec.cmd)
+        case .interactive:
+            executeInteractive(spec.cmd)
         }
     }
 
-    static func needsTerminal(_ command: String) -> Bool {
-        for pattern in interactivePatterns {
-            if command.range(of: pattern, options: .regularExpression) != nil {
-                return true
-            }
-        }
-        return false
-    }
-
-    static func executeInteractive(_ command: String) {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = ["-na", "ghostty", "--args", "-e", "/opt/homebrew/bin/fish", "-c", command]
-        try? task.run()
-    }
-
+    /// Run in background, discard output
     static func executeBackground(_ command: String) {
         DispatchQueue.global(qos: .userInitiated).async {
             let task = Process()
@@ -41,6 +24,22 @@ enum ShellExecutor {
             try? task.run()
             task.waitUntilExit()
         }
+    }
+
+    /// Open terminal, exit when command finishes
+    static func executeShell(_ command: String) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-na", "ghostty", "--args", "-e", "/opt/homebrew/bin/fish", "-c", command]
+        try? task.run()
+    }
+
+    /// Open terminal, drop into interactive shell after command runs
+    static func executeInteractive(_ command: String) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-na", "ghostty", "--args", "-e", "/opt/homebrew/bin/fish", "-C", command]
+        try? task.run()
     }
 
     static func launchApp(_ name: String) {

@@ -72,6 +72,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         viewController.prepareForShow()
         panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(viewController.view)
 
         // Click outside to dismiss
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in

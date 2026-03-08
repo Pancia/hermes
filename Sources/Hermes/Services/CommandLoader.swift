@@ -3,6 +3,15 @@ import Foundation
 /// Loads commands from JSON config, handling generators and nested menus
 enum CommandLoader {
     static func load() -> [String: CommandEntry] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let externalPath = "\(home)/.config/hermes/commands.json"
+
+        if let data = FileManager.default.contents(atPath: externalPath),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return parseMenu(json)
+        }
+
+        // Fall back to bundled config
         guard let url = Bundle.module.url(forResource: "commands", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -24,16 +33,10 @@ enum CommandLoader {
 
     static func parseEntry(_ value: Any) -> CommandEntry? {
         // Array: [title, command] — action
-        if let arr = value as? [Any], arr.count >= 2,
-           let title = arr[0] as? String {
-            if let cmd = arr[1] as? String {
-                return .action(title: title, command: cmd)
-            }
-            // Array command (direct execution) — treat as action with joined command
-            if let cmdArr = arr[1] as? [String] {
-                return .action(title: title, command: cmdArr.joined(separator: " "))
-            }
-            return nil
+        if let arr = value as? [Any], arr.count >= 2 {
+            guard let (title, dynamicTitle) = parseTitle(arr[0]) else { return nil }
+            guard let spec = parseCommandSpec(arr[1]) else { return nil }
+            return .action(title: title, command: spec, dynamicTitle: dynamicTitle)
         }
 
         // Dict with _desc: submenu
@@ -54,6 +57,41 @@ enum CommandLoader {
         return nil
     }
 
+    /// Parse the title slot: string or {"shell:fish": "cmd"}
+    static func parseTitle(_ value: Any) -> (String, DynamicTitle?)? {
+        if let str = value as? String {
+            return (str, nil)
+        }
+        if let dict = value as? [String: String] {
+            for (key, cmd) in dict {
+                if key.hasPrefix("shell:") {
+                    let shell = String(key.dropFirst("shell:".count))
+                    return (cmd, DynamicTitle(shell: shell, cmd: cmd))
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Parse the command slot: string, [string], or {"shell"/"interactive": "cmd"}
+    static func parseCommandSpec(_ value: Any) -> CommandSpec? {
+        if let cmd = value as? String {
+            return CommandSpec(cmd)
+        }
+        if let cmdArr = value as? [String] {
+            return CommandSpec(cmdArr.joined(separator: " "))
+        }
+        if let dict = value as? [String: String] {
+            if let cmd = dict["shell"] {
+                return CommandSpec(cmd, mode: .shell)
+            }
+            if let cmd = dict["interactive"] {
+                return CommandSpec(cmd, mode: .interactive)
+            }
+        }
+        return nil
+    }
+
     static func loadGenerator(_ name: String) -> CommandEntry? {
         switch name {
         case "snippets": return buildSnippetsMenu()
@@ -71,7 +109,7 @@ enum CommandLoader {
         var items: [String: CommandEntry] = [:]
 
         guard let files = try? FileManager.default.contentsOfDirectory(atPath: vpcDir) else {
-            return .submenu(desc: "VPC Workspaces", items: ["x": .action(title: "No VPC files found", command: "echo 'No .vpc files'")])
+            return .submenu(desc: "VPC Workspaces", items: ["x": .action(title: "No VPC files found", command: CommandSpec("echo 'No .vpc files'"))])
         }
 
         let vpcFiles = files.filter { $0.hasSuffix(".vpc") }
@@ -81,7 +119,7 @@ enum CommandLoader {
         var used: Set<Character> = []
         for (name, path) in vpcFiles {
             if let key = assignKey(from: name, used: &used) {
-                items[String(key)] = .action(title: name, command: "\(home)/dotfiles/bin/vpc.py '\(path)'")
+                items[String(key)] = .action(title: name, command: CommandSpec("\(home)/dotfiles/bin/vpc.py '\(path)'"))
             }
         }
 
@@ -113,17 +151,17 @@ enum CommandLoader {
             if let key = assignKey(from: svc.name, used: &used) {
                 let indicator = svc.running ? "\u{25CF}" : "\u{25CB}"
                 let svcItems: [String: CommandEntry] = [
-                    "s": .action(title: "Start", command: "service start \(svc.name)"),
-                    "t": .action(title: "Stop", command: "service stop \(svc.name)"),
-                    "r": .action(title: "Restart", command: "service restart \(svc.name)"),
-                    "l": .action(title: "Log", command: "service log \(svc.name)"),
-                    "e": .action(title: "Edit", command: "service edit \(svc.name)"),
+                    "s": .action(title: "Start", command: CommandSpec("service start \(svc.name)")),
+                    "t": .action(title: "Stop", command: CommandSpec("service stop \(svc.name)")),
+                    "r": .action(title: "Restart", command: CommandSpec("service restart \(svc.name)")),
+                    "l": .action(title: "Log", command: CommandSpec("service log \(svc.name)")),
+                    "e": .action(title: "Edit", command: CommandSpec("service edit \(svc.name)")),
                 ]
                 items[String(key)] = .submenu(desc: "\(svc.name) \(indicator)", items: svcItems)
             }
         }
 
-        items["n"] = .action(title: "New Service", command: "service create")
+        items["n"] = .action(title: "New Service", command: CommandSpec("service create"))
         return .submenu(desc: "+services", items: items)
     }
 
@@ -132,7 +170,7 @@ enum CommandLoader {
         let snippetsFile = "\(home)/ProtonDrive/_config/snippets.txt"
         var items: [String: CommandEntry] = [:]
 
-        items["e"] = .action(title: "Edit Snippets", command: "nvim '\(snippetsFile)'")
+        items["e"] = .action(title: "Edit Snippets", command: CommandSpec("nvim '\(snippetsFile)'", mode: .shell))
 
         guard let content = try? String(contentsOfFile: snippetsFile, encoding: .utf8) else {
             return .submenu(desc: "+snippets", items: items)
@@ -183,7 +221,7 @@ enum CommandLoader {
                 let escaped = snippet.content.replacingOccurrences(of: "'", with: "'\\''")
                 items[String(key)] = .action(
                     title: display,
-                    command: "echo '\(escaped)' | pbcopy && echo 'Copied: \(snippet.title)'"
+                    command: CommandSpec("echo '\(escaped)' | pbcopy && echo 'Copied: \(snippet.title)'")
                 )
             }
         }
@@ -217,7 +255,7 @@ enum CommandLoader {
         var results: [FlatCommand] = []
         for (key, entry) in menu {
             switch entry {
-            case .action(let title, let command):
+            case .action(let title, let command, _):
                 results.append(FlatCommand(key: key, label: title, command: command, path: path))
             case .submenu(let desc, let items):
                 results.append(contentsOf: flattenCommands(items, path: path + [desc]))
