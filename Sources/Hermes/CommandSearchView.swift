@@ -265,11 +265,7 @@ class SearchResultRowView: NSView {
 
     func configure(command: FlatCommand) {
         labelField.stringValue = command.label
-        if command.path.isEmpty {
-            pathField.stringValue = ""
-        } else {
-            pathField.stringValue = "+" + command.path.joined(separator: " > ")
-        }
+        pathField.stringValue = command.keyPath.joined(separator: " > ")
     }
 
     override func draw(_ dirtyRect: NSRect) {

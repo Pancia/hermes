@@ -252,14 +252,14 @@ enum CommandLoader {
     }
 
     /// Flatten command tree for search
-    static func flattenCommands(_ menu: [String: CommandEntry], path: [String] = []) -> [FlatCommand] {
+    static func flattenCommands(_ menu: [String: CommandEntry], path: [String] = [], keyPath: [String] = []) -> [FlatCommand] {
         var results: [FlatCommand] = []
         for (key, entry) in menu {
             switch entry {
             case .action(let title, let command, _):
-                results.append(FlatCommand(key: key, label: title, command: command, path: path))
+                results.append(FlatCommand(key: key, label: title, command: command, path: path, keyPath: keyPath + [key]))
             case .submenu(let desc, let items, _):
-                results.append(contentsOf: flattenCommands(items, path: path + [desc]))
+                results.append(contentsOf: flattenCommands(items, path: path + [desc], keyPath: keyPath + [key]))
             }
         }
         return results

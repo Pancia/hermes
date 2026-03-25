@@ -54,4 +54,5 @@ struct FlatCommand {
     let label: String
     let command: CommandSpec
     let path: [String]
+    let keyPath: [String]
 }
