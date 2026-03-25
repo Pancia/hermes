@@ -42,9 +42,10 @@ enum CommandLoader {
         // Dict with _desc: submenu
         if let dict = value as? [String: Any] {
             let desc = dict["_desc"] as? String ?? "+"
+            let stayOpen = dict["_stay"] as? Bool ?? false
             let items = parseMenu(dict)
             if !items.isEmpty {
-                return .submenu(desc: desc, items: items)
+                return .submenu(desc: desc, items: items, stayOpen: stayOpen)
             }
         }
 
@@ -257,7 +258,7 @@ enum CommandLoader {
             switch entry {
             case .action(let title, let command, _):
                 results.append(FlatCommand(key: key, label: title, command: command, path: path))
-            case .submenu(let desc, let items):
+            case .submenu(let desc, let items, _):
                 results.append(contentsOf: flattenCommands(items, path: path + [desc]))
             }
         }

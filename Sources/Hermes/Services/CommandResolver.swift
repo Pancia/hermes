@@ -21,12 +21,12 @@ enum CommandResolver {
         case .action(_, let command, let dynamicTitle):
             let resolved = dynamicTitle.map { resolveDynamicTitle($0) } ?? entry.title
             return .action(title: resolved, command: command)
-        case .submenu(let desc, let items):
+        case .submenu(let desc, let items, let stayOpen):
             var resolvedItems: [String: CommandEntry] = [:]
             for (k, v) in items {
                 resolvedItems[k] = resolveEntry(v)
             }
-            return .submenu(desc: desc, items: resolvedItems)
+            return .submenu(desc: desc, items: resolvedItems, stayOpen: stayOpen)
         }
     }
 

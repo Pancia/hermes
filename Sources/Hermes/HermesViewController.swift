@@ -14,7 +14,7 @@ class HermesViewController: NSViewController {
     // MARK: - Callbacks
 
     var onClose: (() -> Void)?
-    var onExecute: ((CommandSpec) -> Void)?
+    var onExecute: ((CommandSpec, Bool) -> Void)?
     var onLaunchApp: ((String) -> Void)?
     var onFocusWindow: ((Int) -> Void)?
 
@@ -23,7 +23,8 @@ class HermesViewController: NSViewController {
     private var mode: HermesMode = .command
     private var rootCommands: [String: CommandEntry] = [:]
     private var currentMenu: [String: CommandEntry] = [:]
-    private var menuStack: [(name: String, items: [String: CommandEntry])] = []
+    private var menuStack: [(name: String, items: [String: CommandEntry], stayOpen: Bool)] = []
+    private var currentStayOpen = false
     private var searchQuery = ""
     private var flatCommands: [FlatCommand] = []
 
@@ -61,6 +62,7 @@ class HermesViewController: NSViewController {
         loadCommands()
         mode = .command
         menuStack.removeAll()
+        currentStayOpen = false
         currentMenu = rootCommands
         searchQuery = ""
         appSearchQuery = ""
@@ -247,9 +249,10 @@ class HermesViewController: NSViewController {
     private func handleMenuSelection(key: String, entry: CommandEntry) {
         switch entry {
         case .action(_, let command, _):
-            onExecute?(command)
-        case .submenu(let desc, let items):
-            menuStack.append((name: desc, items: currentMenu))
+            onExecute?(command, currentStayOpen)
+        case .submenu(let desc, let items, let stayOpen):
+            menuStack.append((name: desc, items: currentMenu, stayOpen: currentStayOpen))
+            currentStayOpen = stayOpen
             currentMenu = items
             commandMenuView.setItems(currentMenu)
             commandMenuView.clearSelection()
@@ -263,6 +266,7 @@ class HermesViewController: NSViewController {
             return
         }
         currentMenu = prev.items
+        currentStayOpen = prev.stayOpen
         commandMenuView.setItems(currentMenu)
         commandMenuView.clearSelection()
         updateBreadcrumb()

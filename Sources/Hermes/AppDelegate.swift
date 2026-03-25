@@ -36,8 +36,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         viewController.onClose = { [weak self] in
             self?.hidePanel()
         }
-        viewController.onExecute = { [weak self] command in
-            self?.hidePanel()
+        viewController.onExecute = { [weak self] command, stayOpen in
+            if !stayOpen || command.mode != .background {
+                self?.hidePanel()
+            }
             ShellExecutor.execute(command)
         }
         viewController.onLaunchApp = { [weak self] appName in
